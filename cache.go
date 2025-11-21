@@ -6,8 +6,8 @@ import (
 )
 
 type Cache interface {
-	Set(key string, value any, ttl time.Duration)
-	Get(key string) (any, bool)
+	Set(key string, value any, ttl time.Duration) error
+	Get(key string) (any, error)
 	Delete(key string)
 	Clear()
 }
@@ -23,29 +23,39 @@ func New() Cache {
 	}
 }
 
-func (m *MemoryCache) Set(key string, value any, ttl time.Duration) {
+func (m *MemoryCache) Set(key string, value any, ttl time.Duration) error {
+	if ttl < 0 {
+		return ErrInvalidTTL
+	}
+
+	var exp int64
+	if ttl > 0 {
+		exp = time.Now().Add(ttl).Unix()
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	expiration := time.Now().Add(ttl).Unix()
-	m.items[key] = Item{value, expiration}
+	m.items[key] = Item{value, exp}
+
+	return nil
 }
 
-func (m *MemoryCache) Get(key string) (any, bool) {
+func (m *MemoryCache) Get(key string) (any, error) {
 	m.mu.RLock()
 	item, exist := m.items[key]
 	m.mu.RUnlock()
 
 	if !exist {
-		return nil, false
+		return nil, ErrNotFound
 	}
 
-	if item.Expiration > 0 && time.Now().Unix() > item.Expiration {
+	if item.IsExpired() {
 		m.Delete(key)
-		return nil, false
+		return nil, ErrExpired
 	}
 
-	return item.Value, true
+	return item.Value, nil
 }
 
 func (m *MemoryCache) Delete(key string) {
